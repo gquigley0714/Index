@@ -1,0 +1,144 @@
+# --- 1. APP CONFIGURATION ---
+st.set_page_config(page_title="GQ Virtual Closet", layout="wide", page_icon="👔")
+
+# Initialize Session State to store data across reloads
+if 'closet_db' not in st.session_state:
+    st.session_state.closet_db = []
+if 'outfit_history' not in st.session_state:
+    st.session_state.outfit_history = {} # Format: {date: outfit_dict}
+
+# --- 2. HELPER FUNCTIONS ---
+def process_image(uploaded_file):
+    """Removes background and returns a PIL Image."""
+    input_data = uploaded_file.getvalue()
+    output_data = remove(input_data)
+    return Image.open(io.BytesIO(output_data))
+
+def get_season_tags(month):
+    """Maps months to seasons for filtering logic."""
+    if month in [12, 1, 2]: return "Winter"
+    if month in [3, 4, 5]: return "Spring"
+    if month in [6, 7, 8]: return "Summer"
+    return "Fall"
+
+# --- 3. SIDEBAR / GLOBAL FILTERS ---
+st.sidebar.title("Settings & Style")
+current_month = datetime.now().month
+default_season = get_season_tags(current_month)
+
+selected_season = st.sidebar.selectbox("Current Season", ["Spring", "Summer", "Fall", "Winter"], index=["Spring", "Summer", "Fall", "Winter"].index(default_season))
+selected_style = st.sidebar.selectbox("Occasion/Style", ["Casual", "Streetwear", "Semi-Formal", "Formal", "Sporty"])
+
+st.sidebar.markdown("---")
+st.sidebar.info(f"Filtering for: **{selected_season}** | **{selected_style}**")
+
+# --- 4. MAIN INTERFACE ---
+st.title("👔 My Digital Closet")
+
+tab1, tab2, tab3, tab4 = st.tabs(["Upload Items", "Outfit Builder", "AI Suggestions", "Calendar"])
+
+# --- TAB 1: UPLOAD & AUTO-CATEGORIZE ---
+with tab1:
+    st.header("Add New Item")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        uploaded_file = st.file_uploader("Upload a photo of your clothing", type=["jpg", "png", "jpeg"])
+        category = st.selectbox("Category", [
+            "T-shirt", "Button-up", "Button-down", "Hoodie", "Sweater", 
+            "Jeans", "Pants", "Shorts", "Coat", "Jacket", "Shoes", "Accessory"
+        ])
+        item_season = st.multiselect("Best for which seasons?", ["Spring", "Summer", "Fall", "Winter"], default=[selected_season])
+        item_style = st.multiselect("Style Tags", ["Casual", "Streetwear", "Semi-Formal", "Formal", "Sporty"], default=[selected_style])
+
+    if uploaded_file:
+        with col2:
+            st.write("Processing... (Removing Background)")
+            clean_img = process_image(uploaded_file)
+            st.image(clean_img, width=250, caption="Processed Image")
+            
+            if st.button("Save to Digital Closet"):
+                new_item = {
+                    "id": len(st.session_state.closet_db) + 1,
+                    "image": clean_img,
+                    "category": category,
+                    "seasons": item_season,
+                    "styles": item_style
+                }
+                st.session_state.closet_db.append(new_item)
+                st.success(f"Added {category} to your collection!")
+
+# --- TAB 2: MANUAL OUTFIT BUILDER ---
+with tab2:
+    st.header("Build an Outfit")
+    
+    # Filter closet by season
+    seasonal_closet = [i for i in st.session_state.closet_db if selected_season in i['seasons']]
+    
+    if not seasonal_closet:
+        st.warning(f"No items found for {selected_season}. Go to Upload to add some!")
+    else:
+        c1, c2, c3 = st.columns(3)
+        
+        # Categorize items for selection
+        tops = [i for i in seasonal_closet if i['category'] in ["T-shirt", "Button-up", "Button-down", "Hoodie", "Sweater"]]
+        bottoms = [i for i in seasonal_closet if i['category'] in ["Jeans", "Pants", "Shorts"]]
+        shoes = [i for i in seasonal_closet if i['category'] == "Shoes"]
+
+        with c1:
+            st.subheader("Tops")
+            top_id = st.selectbox("Select Top", [t['id'] for t in tops], format_func=lambda x: f"Item #{x}")
+            if tops:
+                st.image([t['image'] for t in tops if t['id'] == top_id][0], width=150)
+
+        with c2:
+            st.subheader("Bottoms")
+            bottom_id = st.selectbox("Select Bottom", [b['id'] for b in bottoms], format_func=lambda x: f"Item #{x}")
+            if bottoms:
+                st.image([b['image'] for b in bottoms if b['id'] == bottom_id][0], width=150)
+
+        with c3:
+            st.subheader("Shoes")
+            shoe_id = st.selectbox("Select Shoes", [s['id'] for s in shoes], format_func=lambda x: f"Item #{x}")
+            if shoes:
+                st.image([s['image'] for s in shoes if s['id'] == shoe_id][0], width=150)
+
+        if st.button("Save This Outfit"):
+            today = str(datetime.now().date())
+            st.session_state.outfit_history[today] = {"top": top_id, "bottom": bottom_id, "shoes": shoe_id}
+            st.success(f"Outfit saved for {today}!")
+
+# --- TAB 3: AI SUGGESTIONS ---
+with tab3:
+    st.header(f"AI Suggestions for {selected_style}")
+    
+    # Matching Logic: Filter by style and season
+    suggested = [i for i in st.session_state.closet_db if selected_style in i['styles'] and selected_season in i['seasons']]
+    
+    if len(suggested) < 3:
+        st.info("Add more items with matching 'Style Tags' to see AI suggestions.")
+    else:
+        st.write("Based on your preferences, we recommend this look:")
+        cols = st.columns(len(suggested[:4])) # Show up to 4 matching items
+        for idx, item in enumerate(suggested[:4]):
+            cols[idx].image(item['image'], caption=item['category'], width=150)
+
+# --- TAB 4: CALENDAR ---
+with tab4:
+    st.header("Outfit Calendar")
+    date_query = st.date_input("Check date:", datetime.now())
+    date_str = str(date_query)
+    
+    if date_str in st.session_state.outfit_history:
+        entry = st.session_state.outfit_history[date_str]
+        st.write(f"On {date_str}, you wore:")
+        
+        # Pull images from DB
+        outfit_images = [i['image'] for i in st.session_state.closet_db if i['id'] in entry.values()]
+        st.image(outfit_images, width=150)
+    else:
+        st.write("No outfit recorded for this day yet.")
+
+# --- 5. DATA SUMMARY ---
+st.sidebar.markdown("---")
+st.sidebar.write(f"Items in Closet: {len(st.session_state.closet_db)}")
